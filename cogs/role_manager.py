@@ -1,6 +1,7 @@
 import discord
+from datetime import timedelta
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import View, Select, Button
 from helpers import role_db_manager
 
@@ -134,29 +135,77 @@ class RolePaginatedView(View):
 class RoleManager(commands.Cog, name="role_manager"):
     def __init__(self, bot):
         self.bot = bot
+        self.cleanup_task.start()
+
+    def cog_unload(self):
+        self.cleanup_task.cancel()
+
+    @tasks.loop(hours=1)
+    async def cleanup_task(self):
+        """Automatically cleans up old logs every hour."""
+        await role_db_manager.cleanup_old_logs()
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Listens for role mentions and handles notifications via buttons."""
+        """Listens for role mentions and handles notifications & anti-spam."""
         if message.author.bot or not message.guild:
             return
 
+        # Check if the feature is enabled for this server
         if not await role_db_manager.is_enabled(message.guild.id):
             return
 
         if not message.role_mentions:
             return
 
+        # Get whitelisted roles
         whitelisted_ids = await role_db_manager.get_whitelisted_roles(message.guild.id)
         
-        for role in message.role_mentions:
-            if role.id in whitelisted_ids:
-                view = RoleNotificationView(role)
-                await message.reply(
-                    content=f"🔔 Members of **{role.name}** were tagged.\nDo you want to keep this role for future notifications?",
-                    view=view,
-                    allowed_mentions=discord.AllowedMentions.none()
-                )
+        # Filter for whitelisted roles mentioned in this message
+        mentioned_whitelisted = [r for r in message.role_mentions if r.id in whitelisted_ids]
+        if not mentioned_whitelisted:
+            return
+
+        # --- Anti-Spam Check ---
+        # Administrators are exempt
+        if not message.author.guild_permissions.administrator:
+            # 1. Check Total Limit (Max 3 across all roles)
+            total_mentions = await role_db_manager.get_total_mention_count(message.guild.id, message.author.id)
+            if total_mentions >= 3:
+                await self.apply_timeout(message, "Total daily role mention limit exceeded (Max 3).")
+                return
+
+            # 2. Check Per-Role Limit (Max 1 per specific role)
+            for role in mentioned_whitelisted:
+                role_mentions = await role_db_manager.get_role_mention_count(message.guild.id, message.author.id, role.id)
+                if role_mentions >= 1:
+                    await self.apply_timeout(message, f"Daily limit for **{role.name}** exceeded (Max 1).")
+                    return
+
+            # Log all mentions from this message
+            for role in mentioned_whitelisted:
+                await role_db_manager.add_mention_log(message.guild.id, message.author.id, role.id)
+
+        # Proceed with normal notification for the first whitelisted role mentioned
+        for role in mentioned_whitelisted:
+            view = RoleNotificationView(role)
+            await message.reply(
+                content=f"🔔 Members of **{role.name}** were tagged.\nDo you want to keep this role for future notifications?",
+                view=view,
+                allowed_mentions=discord.AllowedMentions.none()
+            )
+            break
+
+    async def apply_timeout(self, message, reason):
+        """Helper to apply timeout and notify user."""
+        try:
+            duration = timedelta(minutes=10)
+            await message.author.timeout(duration, reason=reason)
+            await message.reply(
+                f"⚠️ {message.author.mention}, you have been timed out for 10 minutes.\n**Reason**: {reason}"
+            )
+        except discord.Forbidden:
+            pass
 
     @commands.hybrid_group(
         name="rolemanager",
@@ -178,7 +227,6 @@ class RoleManager(commands.Cog, name="role_manager"):
     @rolemanager.command(name="whitelist", description="Open a menu to add a role to the whitelist.")
     async def whitelist_menu(self, ctx: commands.Context):
         """Opens a paginated menu to whitelist a role."""
-        # Get all server roles, excluding @everyone and roles already whitelisted
         whitelisted_ids = await role_db_manager.get_whitelisted_roles(ctx.guild.id)
         all_roles = [r for r in ctx.guild.roles if r.id != ctx.guild.id and r.id not in whitelisted_ids]
         
@@ -207,7 +255,6 @@ class RoleManager(commands.Cog, name="role_manager"):
         """Lists all roles that are currently whitelisted with counts."""
         role_ids = await role_db_manager.get_whitelisted_roles(ctx.guild.id)
         
-        # Total roles in server (excluding @everyone)
         total_server_roles = len([r for r in ctx.guild.roles if r.id != ctx.guild.id])
         whitelisted_count = 0
         role_names = []
@@ -218,15 +265,11 @@ class RoleManager(commands.Cog, name="role_manager"):
                 role_names.append(f"• **{role.name}**")
                 whitelisted_count += 1
             else:
-                # Cleanup deleted roles
                 await role_db_manager.remove_role(ctx.guild.id, rid)
 
         non_whitelisted_count = total_server_roles - whitelisted_count
 
-        embed = discord.Embed(
-            title="📜 Role Whitelist Summary",
-            color=0x00BFFF
-        )
+        embed = discord.Embed(title="📜 Role Whitelist Summary", color=0x00BFFF)
         embed.add_field(name="✅ Whitelisted", value=str(whitelisted_count), inline=True)
         embed.add_field(name="❌ Non-Whitelisted", value=str(non_whitelisted_count), inline=True)
         
