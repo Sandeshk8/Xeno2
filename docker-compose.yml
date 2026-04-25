@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: xeno-bot
+    restart: always
+    volumes:
+      - ./database:/app/database
+      - ./word_chain_data:/app/word_chain_data
+      - ./config.json:/app/config.json
+    environment:
+      - PYTHONUNBUFFERED=1
