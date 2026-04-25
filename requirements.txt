@@ -20,4 +20,6 @@ tomli==2.0.1
 typing_extensions==4.9.0
 yarl==1.9.4
 psutil==6.0.0
-fast-colorthief==0.0.5aiosqlite==0.20.0
+fast-colorthief==0.0.5
+aiosqlite==0.20.0
+
