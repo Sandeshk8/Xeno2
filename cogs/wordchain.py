@@ -95,6 +95,11 @@ class WordChain(commands.Cog, name="wordchain"):
         await db_manager.stop_wordchain_game(ctx.channel.id)
         await ctx.send("🛑 **WordChain Session Stopped!**\nThanks for playing!")
 
+    @wordchain.command(name='ping', description="Check if the WordChain cog is responsive.")
+    async def ping(self, ctx):
+        await ctx.send("🏓 **WordChain Pong!** The automated deployment works!")
+
+
     async def _show_leaderboard(self, ctx, title="Server Leaderboard"):
         leaderboard = await db_manager.get_wordchain_leaderboard(ctx.guild.id)
         view = LeaderboardView(ctx, leaderboard, title, self.get_leaderboard_embed)
