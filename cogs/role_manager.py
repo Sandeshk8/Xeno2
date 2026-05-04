@@ -1,4 +1,6 @@
 import discord
+import json
+import os
 from datetime import timedelta
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -167,8 +169,29 @@ class RoleManager(commands.Cog, name="role_manager"):
             return
 
         # --- Anti-Spam Check ---
-        # Administrators are exempt
-        if not message.author.guild_permissions.administrator:
+        # Administrators and users with bypass role are exempt
+        config_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "server_config.json")
+        bypass_role_id = None
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    server_config = json.load(f)
+                    
+                    guild_config = server_config.get("servers", {}).get(str(message.guild.id))
+                    if not guild_config:
+                        # Fallback if the guild ID hasn't been updated in the config yet
+                        guild_config = server_config.get("servers", {}).get("REPLACE_WITH_RPUNE_GUILD_ID")
+                        
+                    if guild_config:
+                        bypass_role_id = guild_config.get("bypass_role_id")
+            except Exception as e:
+                print(f"Error reading server_config.json: {e}")
+
+        has_bypass_role = False
+        if bypass_role_id:
+            has_bypass_role = hasattr(message.author, 'roles') and any(role.id == bypass_role_id for role in message.author.roles)
+        
+        if not message.author.guild_permissions.administrator and not has_bypass_role:
             # 1. Check Total Limit (Max 3 across all roles)
             total_mentions = await role_db_manager.get_total_mention_count(message.guild.id, message.author.id)
             if total_mentions >= 3:
