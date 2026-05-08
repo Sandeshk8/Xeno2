@@ -271,11 +271,10 @@ async def on_command_error(context: Context, error) -> None:
         raise error
 
 
-async def setup_hook() -> None:
+async def load_cogs() -> None:
     """
     The code in this function is executed whenever the bot will start.
     """
-    await init_db()
     for file in os.listdir(f"{os.path.realpath(os.path.dirname(__file__))}/cogs"):
         if file.endswith(".py"):
             extension = file[:-3]
@@ -286,6 +285,7 @@ async def setup_hook() -> None:
                 exception = f"{type(e).__name__}: {e}"
                 bot.logger.error(f"Failed to load extension {extension}\n{exception}")
 
-bot.setup_hook = setup_hook
 
+asyncio.run(init_db())
+asyncio.run(load_cogs())
 bot.run(config["token"])
